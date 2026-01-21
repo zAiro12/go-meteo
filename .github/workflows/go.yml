@@ -63,10 +63,15 @@ jobs:
       - name: Run deploy.sh on server
         run: |
           ssh zairo@lucaairo.it 'bash /home/zairo/prove-go/deploy.sh'
-      - name: Create GitHub deployment
+      - name: GitHub Deployment
         uses: chrnorm/deployment-action@v2.0.7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           environment: production
-          ref: ${{ github.ref }}
+          ref: refs/heads/main
           payload: '{"server": "lucaairo.it", "path": "/home/zairo/prove-go"}'
+          initial-status: pending
+          auto-merge: false
+          task: deploy
+          transient-environment: false
+          auto-inactive: true

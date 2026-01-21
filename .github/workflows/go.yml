@@ -62,7 +62,7 @@ jobs:
           scp *.go go.mod go.sum zairo@lucaairo.it:/home/zairo/prove-go/
       - name: Run deploy.sh on server
         run: |
-          ssh zairo@lucaairo.it 'cd /home/zairo/prove-go && bash deploy.sh'
+          ssh zairo@lucaairo.it 'bash /home/zairo/prove-go/deploy.sh'
       - name: Create GitHub deployment
         uses: chrnorm/deployment-action@v2.0.7
         with:

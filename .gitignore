@@ -1,1 +1,45 @@
+# Go build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+bin/
+obj/
+
+# Dependency directories
+vendor/
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Env/config
 .env
+.env.*
+
+# Logs
+*.log
+
+# Node/npm (se usi JS per frontend)
+node_modules/
+
+# Backup
+*~
+
+# Custom scripts
+*.sh
+
+test-meteo

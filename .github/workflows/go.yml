@@ -59,7 +59,7 @@ jobs:
         run: ssh-keyscan lucaairo.it >> ~/.ssh/known_hosts
       - name: Copy files to server
         run: |
-          scp *.go go.mod go.sum airo@lucaairo.it:/home/zairo/prove-go/
+          scp *.go go.mod go.sum zairo@lucaairo.it:/home/zairo/prove-go/
       - name: Run deploy.sh on server
         run: |
           ssh zairo@lucaairo.it 'cd /home/zairo/prove-go && bash deploy.sh'

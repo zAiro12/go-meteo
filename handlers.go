@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 // toggleNotificationsHandler gestisce l'attivazione/disattivazione delle notifiche
@@ -123,21 +126,42 @@ func setLocationHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid coordinates", http.StatusBadRequest)
 		return
 	}
+	// Require admin authorization to change global default
+	if req.AdminUsername == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 
+	// verify user is admin
+	u, err := GetUserByUsername(req.AdminUsername)
+	if err != nil || u == nil || !u.IsAdmin {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// persist global default location in DB (collection app_config)
+	coll := MongoDB.Collection("app_config")
+	ctx := context.Background()
+	filter := bson.M{"key": "default_location"}
+	value := bson.M{"lat": req.Lat, "lon": req.Lon}
+	_, err = coll.UpdateOne(ctx, filter, bson.M{"$set": bson.M{"value": value}}, optionsUpdateUpsert())
+	if err != nil {
+		log.Printf("Errore salvataggio default location su DB: %v", err)
+		http.Error(w, "errore salvataggio", http.StatusInternalServerError)
+		return
+	}
+
+	// update in-memory values too
 	locationMutex.Lock()
 	customLat = req.Lat
 	customLon = req.Lon
 	useCustom = true
 	locationMutex.Unlock()
 
-	log.Printf("📍 Posizione personalizzata impostata: %.4f, %.4f", req.Lat, req.Lon)
+	log.Printf("📍 Posizione globale impostata da admin %s: %.4f, %.4f", req.AdminUsername, req.Lat, req.Lon)
 
 	w.Header().Set(contentTypeHeader, contentTypeJSON)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"lat":     req.Lat,
-		"lon":     req.Lon,
-	})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "lat": req.Lat, "lon": req.Lon})
 }
 
 // resetLocationHandler ripristina la geolocalizzazione automatica

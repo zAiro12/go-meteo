@@ -20,7 +20,6 @@ func loadConfig() {
 	serverPort = ":" + port
 
 	telegramBotToken = os.Getenv("TELEGRAM_BOT_TOKEN")
-	telegramChatID = os.Getenv("TELEGRAM_CHAT_ID")
 
 	intervalMinutes := os.Getenv("NOTIFICATION_INTERVAL_MINUTES")
 	if intervalMinutes == "" {

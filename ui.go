@@ -3,6 +3,7 @@ package main
 import (
 	"html/template"
 	"net/http"
+	"strconv"
 )
 
 const htmlTemplate = `
@@ -39,6 +40,10 @@ h1{
     margin-bottom:10px;
     font-size:2em;
 }
+/* Header layout: title left, auth icon button right */
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.auth-btn{background:transparent;border:none;font-size:1.6em;cursor:pointer;padding:6px;border-radius:8px}
+.auth-btn:hover{background:rgba(0,0,0,0.05)}
 .location{
     text-align:center;
     color:#666;
@@ -171,18 +176,26 @@ h1{
 <body>
 <div class="toast-container" id="toastContainer"></div>
 <div class="container">
-    <h1>🌤️ Meteo App</h1>
+    <div class="header">
+        <h1>🌤️ Meteo App</h1>
+        <div id="authArea" style="display:flex;align-items:center;gap:8px;">
+            <span id="userNameDisplay" style="font-size:0.95em;color:#444;display:none"></span>
+            <button id="openAuthBtn" class="auth-btn" title="Accedi o Registrati">👤</button>
+            <button id="logoutBtn" class="auth-btn" title="Logout" style="display:none">🔓</button>
+        </div>
+    </div>
 
-    <button class="notification-toggle {{if .NotificationsEnabled}}enabled{{end}}" id="notificationToggle">
-        {{if .NotificationsEnabled}}
-            📢 Notifiche Attive
-        {{else}}
-            🔕 Notifiche Disattivate
-        {{end}}
+    <button class="notification-toggle {{if .NotificationsEnabled}}enabled{{end}}" id="notificationToggle" style="display:none">
+        {{if .NotificationsEnabled}}📢 Notifiche Attive{{else}}🔕 Notifiche Disattivate{{end}}
     </button>
 
-    <div class="config-panel">
-        <h3>⚙️ Configurazione notifiche</h3>
+    <!-- Login admin per mostrare configurazione notifiche -->
+    <div id="adminLoginPanel" style="display:none; margin-bottom:20px;">
+        <input type="password" id="adminPasswordInput" placeholder="Password admin" />
+        <button id="adminLoginBtn" class="btn btn-primary">Login Admin</button>
+    </div>
+    <div id="adminConfigPanel" class="config-panel" style="display:none;">
+        <h3>⚙️ Configurazione notifiche (admin)</h3>
         <label>
             Intervallo (minuti):
             <input id="intervalInput" type="number" min="1" max="180" value="{{.IntervalMinutes}}">
@@ -197,6 +210,31 @@ h1{
         </label>
         <button id="saveConfigBtn" class="config-save">💾 Salva configurazione</button>
     </div>
+
+        <!-- Pulsante login (icona) posizionato nella header sopra -->
+
+        <!-- Auth Modal -->
+        <div id="authModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Accesso / Registrazione</h2>
+                    <span class="close" id="authClose">&times;</span>
+                </div>
+                <div style="padding:10px;">
+                    <label>Username: <input id="authUsername" type="text" /></label><br/><br/>
+                    <label>Password: <input id="authPassword" type="password" /></label><br/><br/>
+                    <button id="authLoginBtn" class="btn btn-primary">Accedi</button>
+                    <button id="authRegisterBtn" class="btn btn-secondary">Registrati</button>
+                </div>
+            </div>
+        </div>
+    <div id="userPanel" style="display:none; margin-bottom:20px;">
+        <label>Telegram ID: <input id="telegramInput" type="text" /></label>
+        <button id="saveTelegramBtn" class="btn btn-secondary">Salva Telegram</button>
+        <button class="notification-toggle" id="userNotificationToggle">Attiva notifiche Telegram</button>
+    </div>
+
+    <!-- Meteo sempre visibile per città client di default -->
 
     <div class="location">
         📍 {{.City}}, {{.Country}}<br>
@@ -270,6 +308,19 @@ h1{
 </div>
 
 <script>
+// If page was rendered with preview params, remove them from the URL
+(function(){
+    try {
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('preview_lat') && params.has('preview_lon')) {
+            const newUrl = window.location.pathname + window.location.hash;
+            history.replaceState(null, '', newUrl);
+        }
+    } catch (e) {
+        // ignore older browsers
+    }
+})();
+
 const toggleBtn = document.getElementById("notificationToggle");
 const intervalInput = document.getElementById("intervalInput");
 const startHourInput = document.getElementById("startHourInput");
@@ -355,18 +406,47 @@ window.addEventListener("click", (e) => {
     }
 });
 
-// Salva posizione personalizzata
+// Salva posizione personalizzata: comportamento differenziato
 saveLocationBtn.addEventListener("click", async () => {
     try {
-        const res = await fetch("/meteo/location/set", {
+        // Se non loggato -> anteprima (non salva)
+        if (!currentUser) {
+            // Ricarica la home con parametri di preview (server mostrerà meteo per queste coord)
+            mapModal.style.display = "none";
+            const url = '/?preview_lat=' + encodeURIComponent(selectedLat) + '&preview_lon=' + encodeURIComponent(selectedLon);
+            window.location.href = url;
+            return;
+        }
+
+        // Se utente loggato e admin -> salva posizione globale
+        if (currentUser.is_admin) {
+            const res = await fetch("/location/set", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({lat: selectedLat, lon: selectedLon, admin_username: currentUser.username})
+            });
+            if (!res.ok) throw new Error("Errore salvataggio posizione admin");
+            // persist username so session is restored after reload
+            try { if (currentUser && currentUser.username) localStorage.setItem('meteo_username', currentUser.username); } catch(e){}
+            showToast("Posizione globale aggiornata! Ricaricamento...", "success");
+            mapModal.style.display = "none";
+            setTimeout(() => { window.location.href = '/'; }, 1200);
+            return;
+        }
+
+        // Utente normale -> salva solo per il profilo utente
+        const payload = {...currentUser, lat: selectedLat, lon: selectedLon};
+        const res = await fetch("/meteo/user/update", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({lat: selectedLat, lon: selectedLon})
+            body: JSON.stringify(payload)
         });
-        if (!res.ok) throw new Error("Errore salvataggio posizione");
-        showToast("Posizione salvata! Ricaricamento...", "success");
+        if (!res.ok) throw new Error("Errore salvataggio posizione utente");
+        // ensure session persistence and reload to show new default for this user
+        try { if (currentUser && currentUser.username) localStorage.setItem('meteo_username', currentUser.username); } catch(e){}
+        showToast("Posizione salvata sul profilo personale", "success");
         mapModal.style.display = "none";
-        setTimeout(() => location.reload(), 1500);
+        setTimeout(() => { window.location.href = '/'; }, 900);
     } catch (e) {
         console.error(e);
         showToast("Errore: " + e.message, "error");
@@ -387,25 +467,36 @@ resetLocationBtn.addEventListener("click", async () => {
     }
 });
 
-toggleBtn.addEventListener("click", async () => {
-    try {
-        const res = await fetch("/meteo/toggle-notification", { method: "POST" });
-        if (!res.ok) throw new Error("Errore server");
-        const data = await res.json();
-        if (data.enabled) {
-            toggleBtn.classList.add("enabled");
-            toggleBtn.textContent = "📢 Notifiche Attive";
-            showToast("Notifiche attivate con successo", "success");
-        } else {
-            toggleBtn.classList.remove("enabled");
-            toggleBtn.textContent = "🔕 Notifiche Disattivate";
-            showToast("Notifiche disattivate", "info");
+if (toggleBtn) {
+    toggleBtn.addEventListener("click", async () => {
+        try {
+            if (!currentUser) {
+                showToast("Effettua il login per gestire le notifiche personali", "info");
+                return;
+            }
+            const payload = {...currentUser, notify: !currentUser.notify};
+            const res = await fetch("/meteo/user/update", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) throw new Error("Errore server");
+            currentUser.notify = !currentUser.notify;
+            if (currentUser.notify) {
+                toggleBtn.classList.add("enabled");
+                toggleBtn.textContent = "📢 Notifiche Personali Attive";
+                showToast("Notifiche personali attivate", "success");
+            } else {
+                toggleBtn.classList.remove("enabled");
+                toggleBtn.textContent = "🔕 Notifiche Personali Disattivate";
+                showToast("Notifiche personali disattivate", "info");
+            }
+        } catch (e) {
+            console.error(e);
+            showToast("Errore toggle notifiche: " + e.message, "error");
         }
-    } catch (e) {
-        console.error(e);
-        showToast("Errore toggle notifiche: " + e.message, "error");
-    }
-});
+    });
+}
 
 saveConfigBtn.addEventListener("click", async () => {
     try {
@@ -430,19 +521,252 @@ saveConfigBtn.addEventListener("click", async () => {
         showToast("Errore configurazione: " + e.message, "error");
     }
 });
+
+// --- INIZIO LOGICA UI AUTENTICAZIONE E PROFILO ---
+
+// Admin login
+const adminLoginPanel = document.getElementById("adminLoginPanel");
+const adminConfigPanel = document.getElementById("adminConfigPanel");
+const adminPasswordInput = document.getElementById("adminPasswordInput");
+const adminLoginBtn = document.getElementById("adminLoginBtn");
+
+adminLoginPanel.style.display = "none";
+adminLoginBtn.addEventListener("click", async () => {
+    // legacy: attempt admin login via header password (kept for compatibility)
+    const pass = adminPasswordInput.value;
+    const res = await fetch("/meteo/admin/notifications", {headers: {"X-Admin-Password": pass}});
+    if (res.ok) {
+        adminConfigPanel.style.display = "block";
+        adminLoginPanel.style.display = "none";
+        showToast("Accesso admin riuscito", "success");
+    } else {
+        showToast("Password admin errata", "error");
+    }
+});
+
+// Auth modal and user profile management
+const openAuthBtn = document.getElementById("openAuthBtn");
+const authModal = document.getElementById("authModal");
+const authClose = document.getElementById("authClose");
+const authUsername = document.getElementById("authUsername");
+const authPassword = document.getElementById("authPassword");
+const authLoginBtn = document.getElementById("authLoginBtn");
+const authRegisterBtn = document.getElementById("authRegisterBtn");
+const logoutBtn = document.getElementById("logoutBtn");
+const userNameDisplay = document.getElementById("userNameDisplay");
+
+// Restore session from localStorage (username) on page load
+async function restoreSession() {
+    const stored = localStorage.getItem('meteo_username');
+    if (!stored) return;
+    try {
+        const res = await fetch('/meteo/user/profile?username=' + encodeURIComponent(stored));
+        if (!res.ok) { localStorage.removeItem('meteo_username'); return; }
+        const user = await res.json();
+        currentUser = user;
+        telegramInput.value = user.telegram_user || '';
+        userNotificationToggle.textContent = user.notify ? 'Disattiva notifiche Telegram' : 'Attiva notifiche Telegram';
+        userPanel.style.display = 'block';
+        openAuthBtn.style.display = 'none';
+        logoutBtn.style.display = 'inline-block';
+        userNameDisplay.style.display = 'inline';
+        userNameDisplay.textContent = user.username;
+        // show per-user notification toggle
+        const personalToggle = document.getElementById('notificationToggle');
+        if (personalToggle) {
+            personalToggle.style.display = 'block';
+            if (user.notify) {
+                personalToggle.classList.add('enabled');
+                personalToggle.textContent = '📢 Notifiche Personali Attive';
+            } else {
+                personalToggle.classList.remove('enabled');
+                personalToggle.textContent = '🔕 Notifiche Personali Disattivate';
+            }
+        }
+        if (user.is_admin) {
+            adminConfigPanel.style.display = 'block';
+        } else {
+            adminConfigPanel.style.display = 'none';
+        }
+    } catch (e) {
+        localStorage.removeItem('meteo_username');
+    }
+}
+
+// try restore immediately
+restoreSession();
+
+const userPanel = document.getElementById("userPanel");
+const telegramInput = document.getElementById("telegramInput");
+const saveTelegramBtn = document.getElementById("saveTelegramBtn");
+const userNotificationToggle = document.getElementById("userNotificationToggle");
+
+let currentUser = null;
+
+openAuthBtn.addEventListener("click", () => {
+    authModal.style.display = "block";
+    authPassword.value = "";
+});
+authClose.addEventListener("click", () => { authModal.style.display = "none"; });
+window.addEventListener("click", (e) => { if (e.target === authModal) authModal.style.display = "none"; });
+
+authRegisterBtn.addEventListener("click", async () => {
+    const username = authUsername.value.trim();
+    const password = authPassword.value;
+    if (!username || !password) { showToast("Inserisci username e password", "error"); return; }
+    try {
+        const res = await fetch('/meteo/auth/register', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({username, password})
+        });
+        if (res.status === 201) {
+            showToast('Registrazione avvenuta. Effettua il login.', 'success');
+            authPassword.value = '';
+            // leave username prefilled for login
+        } else {
+            const txt = await res.text();
+            showToast('Errore registrazione: '+txt, 'error');
+        }
+    } catch (e) { showToast('Errore registrazione', 'error'); }
+});
+
+authLoginBtn.addEventListener("click", async () => {
+    const username = authUsername.value.trim();
+    const password = authPassword.value;
+    if (!username || !password) { showToast("Inserisci username e password", "error"); return; }
+    try {
+        const res = await fetch('/meteo/auth/login', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({username, password})
+        });
+        if (res.ok) {
+            const user = await res.json();
+            currentUser = user;
+            // show profile area
+            telegramInput.value = user.telegram_user || '';
+            userNotificationToggle.textContent = user.notify ? 'Disattiva notifiche Telegram' : 'Attiva notifiche Telegram';
+            userPanel.style.display = 'block';
+            // update header: hide login, show logout and user name
+            openAuthBtn.style.display = 'none';
+            // persist session
+            try { localStorage.setItem('meteo_username', user.username); } catch(e){}
+            logoutBtn.style.display = 'inline-block';
+            userNameDisplay.style.display = 'inline';
+            userNameDisplay.textContent = user.username;
+                    // show per-user notification toggle for logged users
+                    const personalToggle = document.getElementById('notificationToggle');
+                    if (personalToggle) {
+                        personalToggle.style.display = 'block';
+                        if (user.notify) {
+                            personalToggle.classList.add('enabled');
+                            personalToggle.textContent = '📢 Notifiche Personali Attive';
+                        } else {
+                            personalToggle.classList.remove('enabled');
+                            personalToggle.textContent = '🔕 Notifiche Personali Disattivate';
+                        }
+                    }
+                    // if user is admin, additionally show admin config
+                    if (user.is_admin) {
+                        adminConfigPanel.style.display = 'block';
+                    } else {
+                        adminConfigPanel.style.display = 'none';
+                    }
+            authModal.style.display = 'none';
+            showToast('Login utente riuscito', 'success');
+        } else {
+            showToast('Credenziali errate', 'error');
+        }
+    } catch (e) { showToast('Errore login', 'error'); }
+});
+
+// Logout client-side
+logoutBtn.addEventListener('click', async () => {
+    try {
+        // optional server logout call
+        await fetch('/meteo/user/logout', {method: 'POST'}).catch(()=>{});
+    } catch (e) {}
+    currentUser = null;
+    try { localStorage.removeItem('meteo_username'); } catch(e) {}
+    userPanel.style.display = 'none';
+    adminConfigPanel.style.display = 'none';
+    const globalToggle = document.getElementById('notificationToggle');
+    if (globalToggle) globalToggle.style.display = 'none';
+    openAuthBtn.style.display = 'inline-block';
+    logoutBtn.style.display = 'none';
+    userNameDisplay.style.display = 'none';
+    userNameDisplay.textContent = '';
+    showToast('Logout effettuato', 'info');
+});
+
+saveTelegramBtn.addEventListener("click", async () => {
+    if (!currentUser) return;
+    const telegram_user = telegramInput.value.trim();
+    const payload = {...currentUser, telegram_user};
+    const res = await fetch("/meteo/user/update", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+        showToast("Telegram ID salvato", "success");
+        currentUser.telegram_user = telegram_user;
+    } else {
+        showToast("Errore salvataggio Telegram", "error");
+    }
+});
+
+userNotificationToggle.addEventListener("click", async () => {
+    if (!currentUser) return;
+    const payload = {...currentUser, notify: !currentUser.notify};
+    const res = await fetch("/meteo/user/update", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+        currentUser.notify = !currentUser.notify;
+        userNotificationToggle.textContent = currentUser.notify ? "Disattiva notifiche Telegram" : "Attiva notifiche Telegram";
+        showToast(currentUser.notify ? "Notifiche attivate" : "Notifiche disattivate", "success");
+    } else {
+        showToast("Errore aggiornamento notifiche", "error");
+    }
+});
+
+// --- FINE LOGICA UI AUTENTICAZIONE E PROFILO ---
+
 </script>
 </body>
 </html>
 `
 
 // homeHandler gestisce la pagina principale con l'interfaccia utente
-func homeHandler(w http.ResponseWriter, r *http.Request) {
+func HomeHandler(w http.ResponseWriter, r *http.Request) {
+	// Support preview query params for unauthenticated preview
+	q := r.URL.Query()
+	if q.Get("preview_lat") != "" && q.Get("preview_lon") != "" {
+		// try parse
+		var err error
+		var lat, lon float64
+		lat, err = strconv.ParseFloat(q.Get("preview_lat"), 64)
+		if err == nil {
+			lon, err = strconv.ParseFloat(q.Get("preview_lon"), 64)
+		}
+		if err == nil {
+			data, err := getWeatherFor(lat, lon)
+			if err == nil {
+				t := template.Must(template.New("weather").Parse(htmlTemplate))
+				_ = t.Execute(w, data)
+				return
+			}
+			// fallthrough to default on error
+		}
+	}
+
 	data, err := getWeather()
 	if err != nil {
 		http.Error(w, "Errore meteo: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-
 	t := template.Must(template.New("weather").Parse(htmlTemplate))
 	_ = t.Execute(w, data)
 }

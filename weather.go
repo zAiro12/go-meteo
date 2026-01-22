@@ -167,3 +167,73 @@ func getWeather() (*WeatherData, error) {
 
 	return data, nil
 }
+
+// getWeatherFor recupera i dati meteo per coordinate specifiche (usato per anteprima)
+func getWeatherFor(lat, lon float64) (*WeatherData, error) {
+	// crea location da coordinate fornite
+	var location GeoLocation
+	location.Lat = lat
+	location.Lon = lon
+	location.City, location.Country = getCityNameFromCoordinates(lat, lon)
+
+	client := omgo.NewClient()
+	req, err := omgo.NewForecastRequest(location.Lat, location.Lon)
+	if err != nil {
+		return nil, err
+	}
+
+	req.WithHourly(
+		omgo.HourlyTemperature2m,
+		omgo.HourlyWeatherCode,
+		omgo.HourlyPrecipitation,
+		omgo.HourlyWindSpeed10m,
+		omgo.HourlyRelativeHumidity2m,
+		omgo.HourlyVisibility,
+	).WithDaily(
+		omgo.DailyTemperature2mMax,
+		omgo.DailyTemperature2mMin,
+		omgo.DailyWeatherCode,
+	).WithTimezone("Europe/Rome")
+
+	weather, err := client.Forecast(context.Background(), req)
+	if err != nil {
+		return nil, err
+	}
+
+	notificationsMutex.RLock()
+	enabled := notificationsEnabled
+	notificationsMutex.RUnlock()
+
+	configMutex.RLock()
+	interval := int(notificationInterval / time.Minute)
+	start := notificationStartHour
+	end := notificationEndHour
+	configMutex.RUnlock()
+
+	data := &WeatherData{
+		City:                 location.City,
+		Country:              location.Country,
+		Lat:                  location.Lat,
+		Lon:                  location.Lon,
+		Time:                 time.Now().Format("15:04 - 02/01/2006"),
+		CurrentCondition:     getWeatherDescription(int(weather.Hourly.WeatherCode[0])),
+		CurrentTemp:          weather.Hourly.Temperature2m[0],
+		Humidity:             weather.Hourly.RelativeHumidity2m[0],
+		WindSpeed:            weather.Hourly.WindSpeed10m[0],
+		Visibility:           weather.Hourly.Visibility[0] / 1000,
+		Precipitation:        weather.Hourly.Precipitation[0],
+		TodayMax:             weather.Daily.Temperature2mMax[0],
+		TodayMin:             weather.Daily.Temperature2mMin[0],
+		TodayCondition:       getWeatherDescription(int(weather.Daily.WeatherCode[0])),
+		TomorrowMax:          weather.Daily.Temperature2mMax[1],
+		TomorrowMin:          weather.Daily.Temperature2mMin[1],
+		TomorrowCondition:    getWeatherDescription(int(weather.Daily.WeatherCode[1])),
+		NotificationsEnabled: enabled,
+		IntervalMinutes:      interval,
+		StartHour:            start,
+		EndHour:              end,
+		Version:              AppVersion,
+	}
+
+	return data, nil
+}

@@ -10,10 +10,11 @@ const (
 	contentTypeJSON     = "application/json"
 	contentTypeHeader   = "Content-Type"
 	methodNotAllowedMsg = "Method not allowed"
+	invalidJSONMsg      = "json non valido"
 )
 
 // Versione applicazione
-const AppVersion = "1.0.4"
+const AppVersion = "1.1.3"
 
 // Costante per posizione personalizzata
 const customLocationLabel = "Posizione personalizzata"
@@ -22,7 +23,6 @@ const customLocationLabel = "Posizione personalizzata"
 var (
 	serverPort            string
 	telegramBotToken      string
-	telegramChatID        string
 	notificationInterval  time.Duration
 	notificationStartHour int
 	notificationEndHour   int
@@ -97,6 +97,7 @@ type ConfigResponse struct {
 
 // SetLocationRequest rappresenta una richiesta di impostazione posizione
 type SetLocationRequest struct {
-	Lat float64 `json:"lat"`
-	Lon float64 `json:"lon"`
+	Lat           float64 `json:"lat"`
+	Lon           float64 `json:"lon"`
+	AdminUsername string  `json:"admin_username,omitempty"`
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -143,7 +144,17 @@ func setLocationHandler(w http.ResponseWriter, r *http.Request) {
 	coll := MongoDB.Collection("app_config")
 	ctx := context.Background()
 	filter := bson.M{"key": "default_location"}
-	value := bson.M{"lat": req.Lat, "lon": req.Lon}
+	// attempt to get human-readable name for coordinates
+	city, province, country := getCityNameFromCoordinates(req.Lat, req.Lon)
+	pcode := provinceCodeFromName(province)
+	displayName := city
+	if pcode != "" {
+		displayName = fmt.Sprintf("%s (%s), %s", city, pcode, country)
+	} else if city != "" && country != "" {
+		displayName = fmt.Sprintf("%s, %s", city, country)
+	}
+
+	value := bson.M{"lat": req.Lat, "lon": req.Lon, "city": city, "country": country, "display": displayName}
 	_, err = coll.UpdateOne(ctx, filter, bson.M{"$set": bson.M{"value": value}}, optionsUpdateUpsert())
 	if err != nil {
 		log.Printf("Errore salvataggio default location su DB: %v", err)
@@ -161,7 +172,14 @@ func setLocationHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("📍 Posizione globale impostata da admin %s: %.4f, %.4f", req.AdminUsername, req.Lat, req.Lon)
 
 	w.Header().Set(contentTypeHeader, contentTypeJSON)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "lat": req.Lat, "lon": req.Lon})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"lat":     req.Lat,
+		"lon":     req.Lon,
+		"city":    city,
+		"country": country,
+		"display": displayName,
+	})
 }
 
 // resetLocationHandler ripristina la geolocalizzazione automatica

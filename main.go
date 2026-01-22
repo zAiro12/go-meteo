@@ -1,9 +1,9 @@
 package main
 
 import (
-	"io"
 	"fmt"
-	
+	"io"
+
 	"log"
 	"net/http"
 	"strings"
@@ -58,6 +58,9 @@ func main() {
 	// Attiva notifiche di default
 	startNotifications()
 
+	// Avvia poller Telegram per registrazione token->chat
+	go pollTelegramUpdates()
+
 	http.HandleFunc("/", logMiddleware(HomeHandler))
 	http.HandleFunc("/toggle-notification", logMiddleware(toggleNotificationsHandler))
 	http.HandleFunc("/config", logMiddleware(getConfigHandler))
@@ -71,11 +74,12 @@ func main() {
 	// Auth endpoints
 	http.HandleFunc("/meteo/auth/register", logMiddleware(RegisterHandler))
 	http.HandleFunc("/meteo/auth/login", logMiddleware(LoginHandler))
+	http.HandleFunc("/meteo/telegram/token", logMiddleware(generateTelegramTokenHandler))
 
 	// legacy endpoints kept for compatibility
 	http.HandleFunc("/meteo/user/login", logMiddleware(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	http.HandleFunc("/meteo/user/logout", logMiddleware(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
-	fmt.Printf("🌐 Server su http://localhost%s\n", serverPort)
+	fmt.Printf("%s 🌐 Server su http://localhost%s\n", time.Now().Format("2006/01/02 15:04:05"), serverPort)
 	log.Fatal(http.ListenAndServe(serverPort, nil))
 }

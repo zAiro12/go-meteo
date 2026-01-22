@@ -67,7 +67,7 @@ func UserProfileUpdateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// if lat/lon provided but city empty, try reverse geocode server-side
 	if (dbUser.City == "" || dbUser.City == customLocationLabel) && (dbUser.Lat != 0 || dbUser.Lon != 0) {
-		city, _ := getCityNameFromCoordinates(dbUser.Lat, dbUser.Lon)
+		city, _, _ := getCityNameFromCoordinates(dbUser.Lat, dbUser.Lon)
 		dbUser.City = city
 	}
 	err := UpsertUser(dbUser)

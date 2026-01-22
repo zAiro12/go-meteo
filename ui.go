@@ -3,6 +3,7 @@ package main
 import (
 	"html/template"
 	"net/http"
+	"net/url"
 	"strconv"
 )
 
@@ -97,6 +98,20 @@ h1{
     padding:4px 6px;
     margin-left:4px;
 }
+/* Telegram input & button styles */
+.user-panel{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}
+.input-row{display:flex;align-items:center;gap:12px;width:100%}
+.telegram-input{padding:12px 16px;border-radius:12px;border:1px solid #e6eef5;background:#fff;min-width:160px;flex:1;font-size:1rem;box-shadow:0 6px 18px rgba(0,0,0,0.06)}
+.btn-telegram{background:#0088cc;color:white;padding:12px 22px;border-radius:14px;border:none;cursor:pointer;font-weight:700;font-size:1rem;box-shadow:0 8px 20px rgba(2,136,204,0.18);min-height:54px;display:inline-flex;align-items:center;justify-content:center}
+.btn-telegram:hover{background:#007ab8;transform:translateY(-2px)}
+.center-actions{width:100%;display:flex;justify-content:center;margin-top:8px}
+.notification-toggle.user-toggle{padding:12px 20px;border-radius:14px;min-height:54px}
+
+@media (max-width:700px){
+    .input-row{flex-direction:column;align-items:stretch}
+    .btn-telegram{width:100%}
+    .notification-toggle.user-toggle{width:100%}
+}
 .config-save{
     margin-top:8px;
     padding:8px 16px;
@@ -185,9 +200,7 @@ h1{
         </div>
     </div>
 
-    <button class="notification-toggle {{if .NotificationsEnabled}}enabled{{end}}" id="notificationToggle" style="display:none">
-        {{if .NotificationsEnabled}}📢 Notifiche Attive{{else}}🔕 Notifiche Disattivate{{end}}
-    </button>
+    
 
     <!-- Login admin per mostrare configurazione notifiche -->
     <div id="adminLoginPanel" style="display:none; margin-bottom:20px;">
@@ -228,10 +241,17 @@ h1{
                 </div>
             </div>
         </div>
-    <div id="userPanel" style="display:none; margin-bottom:20px;">
-        <label>Telegram ID: <input id="telegramInput" type="text" /></label>
-        <button id="saveTelegramBtn" class="btn btn-secondary">Salva Telegram</button>
-        <button class="notification-toggle" id="userNotificationToggle">Attiva notifiche Telegram</button>
+    <div id="userPanel" style="display:none;">
+        <div class="user-panel">
+            <label style="font-weight:600;color:#333">Telegram ID:</label>
+            <div class="input-row">
+                <input id="telegramInput" type="text" class="telegram-input" />
+                <button id="saveTelegramBtn" class="btn-telegram">Salva Telegram</button>
+            </div>
+            <div class="center-actions">
+                <button id="userNotificationToggle" class="notification-toggle user-toggle" style="padding:10px 18px;font-size:0.95em">Attiva notifiche</button>
+            </div>
+        </div>
     </div>
 
     <!-- Meteo sempre visibile per città client di default -->
@@ -321,7 +341,6 @@ h1{
     }
 })();
 
-const toggleBtn = document.getElementById("notificationToggle");
 const intervalInput = document.getElementById("intervalInput");
 const startHourInput = document.getElementById("startHourInput");
 const endHourInput = document.getElementById("endHourInput");
@@ -409,10 +428,10 @@ window.addEventListener("click", (e) => {
 // Salva posizione personalizzata: comportamento differenziato
 saveLocationBtn.addEventListener("click", async () => {
     try {
-        // Se non loggato -> anteprima (non salva)
+        // Se non loggato -> anteprima (non salva): mostra meteo per le coordinate selezionate
         if (!currentUser) {
-            // Ricarica la home con parametri di preview (server mostrerà meteo per queste coord)
             mapModal.style.display = "none";
+            showToast("Anteprima: la posizione non verrà salvata. Effettua il login per salvarla.", "info");
             const url = '/?preview_lat=' + encodeURIComponent(selectedLat) + '&preview_lon=' + encodeURIComponent(selectedLon);
             window.location.href = url;
             return;
@@ -444,9 +463,48 @@ saveLocationBtn.addEventListener("click", async () => {
         if (!res.ok) throw new Error("Errore salvataggio posizione utente");
         // ensure session persistence and reload to show new default for this user
         try { if (currentUser && currentUser.username) localStorage.setItem('meteo_username', currentUser.username); } catch(e){}
+        // Recupera il nome della città e della provincia via reverse geocoding per mostrare il nome nella home
+        let cityName = '';
+        let provinceName = '';
+        let countryName = '';
+        try {
+            const rev = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + encodeURIComponent(selectedLat) + '&lon=' + encodeURIComponent(selectedLon));
+            if (rev.ok) {
+                const j = await rev.json();
+                if (j && j.address) {
+                    cityName = j.address.city || j.address.town || j.address.village || j.address.hamlet || '';
+                    provinceName = j.address.county || j.address.state || j.address.region || j.address.province || '';
+                    countryName = j.address.country || j.address.country_code || '';
+                }
+            }
+        } catch (e) { /* ignore reverse geocode errors */ }
+
+        // Convert province full name to common 2-letter code when possible (e.g., Milano -> MI)
+        function provinceCodeFromName(name) {
+            if (!name) return '';
+            const n = name.toLowerCase();
+            const map = {
+                'milano':'MI','milan':'MI','roma':'RM','torino':'TO','torino città':'TO','napoli':'NA','naples':'NA','genova':'GE','venezia':'VE','venice':'VE','verona':'VR','bari':'BA','palermo':'PA','catania':'CT','firenze':'FI','florence':'FI','bologna':'BO','cagliari':'CA','trento':'TN','bolzano':'BZ','brescia':'BS','bergamo':'BG','monza':'MB','modena':'MO','padova':'PD','vicenza':'VI','como':'CO','pavia':'PV','messina':'ME','taranto':'TA','perugia':'PG','ancona':'AN','siena':'SI','arezzo':'AR','lecce':'LE','salerno':'SA','reggio calabria':'RC','cosenza':'CS','veneto':'VE'
+            };
+            for (const k in map) {
+                if (n.includes(k)) return map[k];
+            }
+            // fallback: take first two consonant letters of name
+            const cleaned = n.replace(/[^a-z]/g, '');
+            if (cleaned.length >= 2) return cleaned.substr(0,2).toUpperCase();
+            return cleaned.toUpperCase();
+        }
+        const provinceCode = provinceCodeFromName(provinceName);
         showToast("Posizione salvata sul profilo personale", "success");
         mapModal.style.display = "none";
-        setTimeout(() => { window.location.href = '/'; }, 900);
+        // Ricarica la home mostrando subito la città e la provincia (se trovate) o le coordinate
+        setTimeout(() => {
+            let url = '/?preview_lat=' + encodeURIComponent(selectedLat) + '&preview_lon=' + encodeURIComponent(selectedLon);
+            if (cityName) url += '&preview_city=' + encodeURIComponent(cityName);
+            if (provinceCode) url += '&preview_province=' + encodeURIComponent(provinceCode);
+            if (countryName) url += '&preview_country=' + encodeURIComponent(countryName);
+            window.location.href = url;
+        }, 900);
     } catch (e) {
         console.error(e);
         showToast("Errore: " + e.message, "error");
@@ -467,36 +525,6 @@ resetLocationBtn.addEventListener("click", async () => {
     }
 });
 
-if (toggleBtn) {
-    toggleBtn.addEventListener("click", async () => {
-        try {
-            if (!currentUser) {
-                showToast("Effettua il login per gestire le notifiche personali", "info");
-                return;
-            }
-            const payload = {...currentUser, notify: !currentUser.notify};
-            const res = await fetch("/meteo/user/update", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify(payload)
-            });
-            if (!res.ok) throw new Error("Errore server");
-            currentUser.notify = !currentUser.notify;
-            if (currentUser.notify) {
-                toggleBtn.classList.add("enabled");
-                toggleBtn.textContent = "📢 Notifiche Personali Attive";
-                showToast("Notifiche personali attivate", "success");
-            } else {
-                toggleBtn.classList.remove("enabled");
-                toggleBtn.textContent = "🔕 Notifiche Personali Disattivate";
-                showToast("Notifiche personali disattivate", "info");
-            }
-        } catch (e) {
-            console.error(e);
-            showToast("Errore toggle notifiche: " + e.message, "error");
-        }
-    });
-}
 
 saveConfigBtn.addEventListener("click", async () => {
     try {
@@ -571,23 +599,20 @@ async function restoreSession() {
         logoutBtn.style.display = 'inline-block';
         userNameDisplay.style.display = 'inline';
         userNameDisplay.textContent = user.username;
-        // show per-user notification toggle
-        const personalToggle = document.getElementById('notificationToggle');
-        if (personalToggle) {
-            personalToggle.style.display = 'block';
-            if (user.notify) {
-                personalToggle.classList.add('enabled');
-                personalToggle.textContent = '📢 Notifiche Personali Attive';
-            } else {
-                personalToggle.classList.remove('enabled');
-                personalToggle.textContent = '🔕 Notifiche Personali Disattivate';
-            }
-        }
+        // per-user toggle aggiornato più in basso (userNotificationToggle)
         if (user.is_admin) {
             adminConfigPanel.style.display = 'block';
         } else {
             adminConfigPanel.style.display = 'none';
         }
+        // If the page wasn't rendered for this user, reload so server shows user's saved city
+        try {
+            const params = new URLSearchParams(window.location.search);
+            if (!params.has('username')) {
+                window.location.href = '/?username=' + encodeURIComponent(user.username);
+                return;
+            }
+        } catch (e) {}
     } catch (e) {
         localStorage.removeItem('meteo_username');
     }
@@ -653,18 +678,7 @@ authLoginBtn.addEventListener("click", async () => {
             logoutBtn.style.display = 'inline-block';
             userNameDisplay.style.display = 'inline';
             userNameDisplay.textContent = user.username;
-                    // show per-user notification toggle for logged users
-                    const personalToggle = document.getElementById('notificationToggle');
-                    if (personalToggle) {
-                        personalToggle.style.display = 'block';
-                        if (user.notify) {
-                            personalToggle.classList.add('enabled');
-                            personalToggle.textContent = '📢 Notifiche Personali Attive';
-                        } else {
-                            personalToggle.classList.remove('enabled');
-                            personalToggle.textContent = '🔕 Notifiche Personali Disattivate';
-                        }
-                    }
+                    // mostra solo il toggle per utente (userNotificationToggle) già aggiornato sopra
                     // if user is admin, additionally show admin config
                     if (user.is_admin) {
                         adminConfigPanel.style.display = 'block';
@@ -673,6 +687,8 @@ authLoginBtn.addEventListener("click", async () => {
                     }
             authModal.style.display = 'none';
             showToast('Login utente riuscito', 'success');
+            // ricarica la pagina con username per mostrare la città salvata dal server
+            try { window.location.href = '/?username=' + encodeURIComponent(user.username); } catch(e){}
         } else {
             showToast('Credenziali errate', 'error');
         }
@@ -689,13 +705,14 @@ logoutBtn.addEventListener('click', async () => {
     try { localStorage.removeItem('meteo_username'); } catch(e) {}
     userPanel.style.display = 'none';
     adminConfigPanel.style.display = 'none';
-    const globalToggle = document.getElementById('notificationToggle');
-    if (globalToggle) globalToggle.style.display = 'none';
+    // rimuove riferimento a toggle globale (usiamo solo il toggle per utente)
     openAuthBtn.style.display = 'inline-block';
     logoutBtn.style.display = 'none';
     userNameDisplay.style.display = 'none';
     userNameDisplay.textContent = '';
     showToast('Logout effettuato', 'info');
+    // dopo logout ricarica la home senza parametri in modo che venga mostrata la città di default (admin)
+    setTimeout(() => { window.location.href = '/'; }, 500);
 });
 
 saveTelegramBtn.addEventListener("click", async () => {
@@ -740,33 +757,90 @@ userNotificationToggle.addEventListener("click", async () => {
 `
 
 // homeHandler gestisce la pagina principale con l'interfaccia utente
-func HomeHandler(w http.ResponseWriter, r *http.Request) {
-	// Support preview query params for unauthenticated preview
-	q := r.URL.Query()
-	if q.Get("preview_lat") != "" && q.Get("preview_lon") != "" {
-		// try parse
-		var err error
-		var lat, lon float64
-		lat, err = strconv.ParseFloat(q.Get("preview_lat"), 64)
+func renderTemplate(w http.ResponseWriter, data *WeatherData) error {
+	t := template.Must(template.New("weather").Parse(htmlTemplate))
+	return t.Execute(w, data)
+}
+
+func tryRenderForUser(w http.ResponseWriter, q url.Values) bool {
+	username := q.Get("username")
+	if username == "" {
+		return false
+	}
+	u, _ := GetUserByUsername(username)
+	if u == nil {
+		return false
+	}
+	if u.Lat != 0 || u.Lon != 0 {
+		data, err := getWeatherFor(u.Lat, u.Lon)
 		if err == nil {
-			lon, err = strconv.ParseFloat(q.Get("preview_lon"), 64)
-		}
-		if err == nil {
-			data, err := getWeatherFor(lat, lon)
-			if err == nil {
-				t := template.Must(template.New("weather").Parse(htmlTemplate))
-				_ = t.Execute(w, data)
-				return
+			if u.City != "" {
+				data.City = u.City
 			}
-			// fallthrough to default on error
+			_ = renderTemplate(w, data)
+			return true
 		}
 	}
+	return false
+}
 
+func tryRenderPreview(w http.ResponseWriter, q url.Values) bool {
+	if q.Get("preview_lat") == "" || q.Get("preview_lon") == "" {
+		return false
+	}
+	lat, err := strconv.ParseFloat(q.Get("preview_lat"), 64)
+	if err != nil {
+		return false
+	}
+	lon, err := strconv.ParseFloat(q.Get("preview_lon"), 64)
+	if err != nil {
+		return false
+	}
+	data, err := getWeatherFor(lat, lon)
+	if err != nil {
+		return false
+	}
+	if q.Get("preview_city") != "" {
+		city := q.Get("preview_city")
+		if q.Get("preview_province") != "" {
+			city = city + " (" + q.Get("preview_province") + ")"
+		}
+		data.City = city
+	}
+	if q.Get("preview_country") != "" {
+		data.Country = q.Get("preview_country")
+	}
+	_ = renderTemplate(w, data)
+	return true
+}
+
+func HomeHandler(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	// 1) show user's saved city if requested
+	if tryRenderForUser(w, q) {
+		return
+	}
+	// 2) preview (anonymous)
+	if tryRenderPreview(w, q) {
+		return
+	}
+	// 3) default weather
 	data, err := getWeather()
 	if err != nil {
 		http.Error(w, "Errore meteo: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	t := template.Must(template.New("weather").Parse(htmlTemplate))
-	_ = t.Execute(w, data)
+	// If there is no admin default location configured, and we're on the public homepage
+	// (no preview and no username), do not show a perceived city from IP geolocation.
+	// Leave City/Country empty so the homepage does not display the last user's city.
+	if q.Get("username") == "" && q.Get("preview_lat") == "" && q.Get("preview_lon") == "" {
+		locationMutex.RLock()
+		localUseCustom := useCustom
+		locationMutex.RUnlock()
+		if !localUseCustom {
+			data.City = ""
+			data.Country = ""
+		}
+	}
+	_ = renderTemplate(w, data)
 }

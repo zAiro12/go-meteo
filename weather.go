@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hectormalot/omgo"
@@ -45,26 +46,30 @@ func getWeatherDescription(code int) string {
 }
 
 // getCityNameFromCoordinates usa reverse geocoding per ottenere il nome della città
-func getCityNameFromCoordinates(lat, lon float64) (city, country string) {
+func getCityNameFromCoordinates(lat, lon float64) (city, province, country string) {
 	reverseURL := fmt.Sprintf("https://nominatim.openstreetmap.org/reverse?format=json&lat=%.6f&lon=%.6f", lat, lon)
 
 	resp, err := http.Get(reverseURL)
 	if err != nil {
-		return customLocationLabel, ""
+		return customLocationLabel, "", ""
 	}
 	defer resp.Body.Close()
 
 	var reverseData struct {
 		Address struct {
-			City    string `json:"city"`
-			Town    string `json:"town"`
-			Village string `json:"village"`
-			Country string `json:"country"`
+			City     string `json:"city"`
+			Town     string `json:"town"`
+			Village  string `json:"village"`
+			County   string `json:"county"`
+			State    string `json:"state"`
+			Region   string `json:"region"`
+			Province string `json:"province"`
+			Country  string `json:"country"`
 		} `json:"address"`
 	}
 
 	if json.NewDecoder(resp.Body).Decode(&reverseData) != nil {
-		return customLocationLabel, ""
+		return customLocationLabel, "", ""
 	}
 
 	city = reverseData.Address.City
@@ -78,7 +83,60 @@ func getCityNameFromCoordinates(lat, lon float64) (city, country string) {
 		city = customLocationLabel
 	}
 
-	return city, reverseData.Address.Country
+	// determine province from available fields
+	if reverseData.Address.County != "" {
+		province = reverseData.Address.County
+	} else if reverseData.Address.Province != "" {
+		province = reverseData.Address.Province
+	} else if reverseData.Address.State != "" {
+		province = reverseData.Address.State
+	} else if reverseData.Address.Region != "" {
+		province = reverseData.Address.Region
+	} else {
+		province = ""
+	}
+
+	country = reverseData.Address.Country
+	return city, province, country
+}
+
+// provinceCodeFromName attempts to map an Italian province/state name into a two-letter code
+func provinceCodeFromName(name string) string {
+	if name == "" {
+		return ""
+	}
+	n := strings.ToLower(name)
+	m := map[string]string{
+		"milano": "MI", "milan": "MI", "milano città": "MI",
+		"roma": "RM", "torino": "TO", "napoli": "NA", "genova": "GE",
+		"venezia": "VE", "venice": "VE", "verona": "VR", "bari": "BA",
+		"palermo": "PA", "catania": "CT", "firenze": "FI", "florence": "FI",
+		"bologna": "BO", "cagliari": "CA", "trento": "TN", "bolzano": "BZ",
+		"brescia": "BS", "bergamo": "BG", "monza": "MB", "modena": "MO",
+		"padova": "PD", "vicenza": "VI", "como": "CO", "pavia": "PV",
+		"messina": "ME", "taranto": "TA", "perugia": "PG", "ancona": "AN",
+		"siena": "SI", "arezzo": "AR", "lecce": "LE", "salerno": "SA",
+		"reggio calabria": "RC", "cosenza": "CS",
+	}
+	for k, v := range m {
+		if strings.Contains(n, k) {
+			return v
+		}
+	}
+	// fallback: take first two letters
+	cleaned := ""
+	for _, r := range n {
+		if r >= 'a' && r <= 'z' {
+			cleaned += string(r)
+			if len(cleaned) >= 2 {
+				break
+			}
+		}
+	}
+	if len(cleaned) >= 2 {
+		return strings.ToUpper(cleaned[:2])
+	}
+	return strings.ToUpper(cleaned)
 }
 
 // getWeather recupera i dati meteo per la posizione attuale o personalizzata
@@ -91,7 +149,17 @@ func getWeather() (*WeatherData, error) {
 		location.Lat = customLat
 		location.Lon = customLon
 		locationMutex.RUnlock()
-		location.City, location.Country = getCityNameFromCoordinates(location.Lat, location.Lon)
+		city, province, country := getCityNameFromCoordinates(location.Lat, location.Lon)
+		// Format city with province code when available: "City (PR), Country"
+		pcode := provinceCodeFromName(province)
+		if pcode != "" {
+			location.City = fmt.Sprintf("%s (%s), %s", city, pcode, country)
+		} else if city != "" && country != "" {
+			location.City = fmt.Sprintf("%s, %s", city, country)
+		} else {
+			location.City = city
+		}
+		location.Country = country
 	} else {
 		locationMutex.RUnlock()
 		// Geolocalizzazione automatica
@@ -174,7 +242,16 @@ func getWeatherFor(lat, lon float64) (*WeatherData, error) {
 	var location GeoLocation
 	location.Lat = lat
 	location.Lon = lon
-	location.City, location.Country = getCityNameFromCoordinates(lat, lon)
+	city, province, country := getCityNameFromCoordinates(lat, lon)
+	pcode := provinceCodeFromName(province)
+	if pcode != "" {
+		location.City = fmt.Sprintf("%s (%s), %s", city, pcode, country)
+	} else if city != "" && country != "" {
+		location.City = fmt.Sprintf("%s, %s", city, country)
+	} else {
+		location.City = city
+	}
+	location.Country = country
 
 	client := omgo.NewClient()
 	req, err := omgo.NewForecastRequest(location.Lat, location.Lon)
